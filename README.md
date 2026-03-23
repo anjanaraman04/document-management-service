@@ -94,7 +94,7 @@ All API endpoints are prefixed with `/api/documents/` and return JSON.
 ```bash
 curl -X POST http://127.0.0.1:8000/api/documents/ \
   -H "Content-Type: application/json" \
-  -d '{"title": "My Document", "content": "Hello my name is bob. I like cheese."}'
+  -d '{"title": "My Document", "content": "Hello this is my first document!"}'
 ```
 
 **Response `201`**
@@ -102,7 +102,7 @@ curl -X POST http://127.0.0.1:8000/api/documents/ \
 {
   "id": 1,
   "title": "My Document",
-  "content": "Hello my name is bob. I like cheese.",
+  "content": "Hello this is my first document!",
   "version": 1,
   "created_at": "2026-03-20T10:00:00+00:00",
   "updated_at": "2026-03-20T10:00:00+00:00"
@@ -124,7 +124,7 @@ curl http://127.0.0.1:8000/api/documents/1/
 {
   "id": 1,
   "title": "My Document",
-  "content": "Hello my name is bob. I like cheese.",
+  "content": "Hello this is my first document!",
   "version": 1,
   "created_at": "2026-03-20T10:00:00+00:00",
   "updated_at": "2026-03-20T10:00:00+00:00"
@@ -151,7 +151,7 @@ curl -X PATCH http://127.0.0.1:8000/api/documents/1/replace-text/ \
   -d '{
     "changes": [
       {"search": "Hello", "replacement": "Hi"},
-      {"search": "cheese", "replacement": "pizza"}
+      {"search": "first", "replacement": "second"}
     ]
   }'
 ```
@@ -161,7 +161,7 @@ curl -X PATCH http://127.0.0.1:8000/api/documents/1/replace-text/ \
 {
   "id": 1,
   "title": "My Document",
-  "content": "Hi my name is bob. I like pizza.",
+  "content": "Hi this is my second document!.",
   "version": 2,
   "created_at": "2026-03-20T10:00:00+00:00",
   "updated_at": "2026-03-20T10:05:00+00:00",
@@ -173,7 +173,7 @@ curl -X PATCH http://127.0.0.1:8000/api/documents/1/replace-text/ \
 ```json
 {
   "id": 1,
-  "content": "Hi my name is bob. I like pizza.",
+  "content": "Hi this is my second document!",
   "version": 2,
   "warnings": [
     "Search term \"foo\" not found in document — skipped"
@@ -190,22 +190,22 @@ curl -X PATCH http://127.0.0.1:8000/api/documents/1/replace-text/ \
 Returns a snippet of content surrounding the first match, with the matched term wrapped in `>>>` and `<<<`.
 
 ```bash
-curl "http://127.0.0.1:8000/api/documents/1/search/?q=bob"
+curl "http://127.0.0.1:8000/api/documents/1/search/?q=document"
 ```
 
 **Response `200`**
 ```json
 {
   "id": 1,
-  "query": "bob",
-  "snippet": "Hi my name is >>>bob<<<. I like pizza."
+  "query": "document",
+  "snippet": "Hi this is my second >>>document<<<!"
 }
 ```
 
 **Response `404`** — query not found
 ```json
 {
-  "error": "\"bob\" not found in document"
+  "error": "\"document\" not found in document"
 }
 ```
 
@@ -218,21 +218,21 @@ curl "http://127.0.0.1:8000/api/documents/1/search/?q=bob"
 Returns all documents containing the query as a substring, each with a highlighted snippet.
 
 ```bash
-curl "http://127.0.0.1:8000/api/documents/search/?q=pizza"
+curl "http://127.0.0.1:8000/api/documents/search/?q=document"
 ```
 
 **Response `200`**
 ```json
 {
-  "query": "pizza",
+  "query": "document",
   "results": [
     {
       "id": 1,
-      "snippet": "Hi my name is bob. I like >>>pizza<<<."
+      "snippet": "Hi this is my second >>>document<<<!"
     },
     {
-      "id": 3,
-      "snippet": "I also enjoy >>>pizza<<< on Fridays."
+      "id": 2,
+      "snippet": "I also wrote this >>>document<<<."
     }
   ]
 }
