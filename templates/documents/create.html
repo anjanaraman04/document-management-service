@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}New Document{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+  <h1 class="text-2xl font-bold text-gray-800 mb-8">New Document</h1>
+
+  <form id="create-form" class="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1" for="title">Title</label>
+      <input
+        id="title"
+        type="text"
+        placeholder="Enter document title"
+        class="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+      />
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1" for="content">Content</label>
+      <textarea
+        id="content"
+        rows="10"
+        placeholder="Enter document content"
+        class="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+      ></textarea>
+    </div>
+
+    <!-- Error message -->
+    <div id="error-msg" class="hidden text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3"></div>
+
+    <div class="flex gap-3 pt-1">
+      <button
+        type="submit"
+        class="bg-indigo-600 text-white text-sm font-medium px-5 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
+      >
+        Create Document
+      </button>
+      <a href="/" class="text-sm font-medium text-gray-500 px-5 py-2 rounded-lg hover:bg-gray-100 transition-colors">
+        Cancel
+      </a>
+    </div>
+
+  </form>
+</div>
+
+<script>
+  document.getElementById('create-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const title = document.getElementById('title').value.trim();
+    const content = document.getElementById('content').value.trim();
+    const errorMsg = document.getElementById('error-msg');
+
+    errorMsg.classList.add('hidden');
+
+    const response = await fetch('/api/documents/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({title, content}),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      errorMsg.textContent = data.error || 'Something went wrong.';
+      errorMsg.classList.remove('hidden');
+      return;
+    }
+
+    window.location.href = `/documents/${data.id}/`;
+  });
+</script>
+{% endblock %}
