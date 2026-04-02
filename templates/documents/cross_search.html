@@ -67,12 +67,16 @@
         .replace(/>>>/g, '<mark class="bg-yellow-200 text-yellow-900 rounded px-0.5">')
         .replace(/<<</g, '</mark>');
       return `
-        <a href="/documents/${r.id}/" class="block bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md hover:border-indigo-300 transition-all">
+        <div class="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md hover:border-indigo-300 transition-all">
           <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">Document #${r.id}</span>
+            <a href="/documents/${r.id}/" class="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full hover:underline">Document #${r.id}</a>
+            <a href="/documents/${r.id}/edit/?q=${encodeURIComponent(query)}"
+              class="text-xs font-medium text-gray-600 border border-gray-300 px-3 py-1 rounded-lg hover:bg-gray-50 transition-colors">
+              Jump to Edit
+            </a>
           </div>
           <p class="text-sm text-gray-700 leading-relaxed">${highlighted}</p>
-        </a>`;
+        </div>`;
     }).join('');
 
     results.innerHTML = `

@@ -3,7 +3,7 @@
 {% block title %}{{ document.title }}{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto">
+<div class="max-w-3xl mx-auto">
 
   <!-- Header -->
   <div class="flex items-start justify-between mb-6">
@@ -11,14 +11,41 @@
       <a href="/" class="text-sm text-indigo-600 hover:underline">← All Documents</a>
       <h1 class="text-2xl font-bold text-gray-800 mt-2">{{ document.title }}</h1>
     </div>
-    <span class="inline-block text-xs font-medium bg-indigo-50 text-indigo-600 px-2 py-1 rounded-full mt-6">
+    <span id="version-badge" class="inline-block text-xs font-medium bg-indigo-50 text-indigo-600 px-2 py-1 rounded-full mt-6">
       v{{ document.version }}
     </span>
   </div>
 
-  <!-- Content -->
-  <div class="bg-white border border-gray-200 rounded-xl p-6 mb-6">
-    <p class="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap">{{ document.content }}</p>
+  <!-- View toggle -->
+  <div class="flex gap-2 mb-4">
+    <button id="btn-normal" onclick="showView('normal')"
+      class="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white transition-colors">
+      Normal
+    </button>
+    <button id="btn-redline" onclick="showView('redline')"
+      class="text-xs font-medium px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
+      Track Changes
+    </button>
+  </div>
+
+  <!-- Normal view -->
+  <div id="view-normal" class="bg-white border border-gray-200 rounded-xl p-6 mb-6">
+    <p id="normal-content" class="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap">{{ document.content }}</p>
+  </div>
+
+  <!-- Redline view -->
+  <div id="view-redline" class="hidden mb-6">
+    <!-- Inline annotated document -->
+    <div class="bg-white border border-gray-200 rounded-xl p-6 mb-4">
+      <p id="redline-loading" class="text-sm text-gray-400">Loading tracked changes...</p>
+      <div id="redline-content" class="text-gray-700 text-sm leading-relaxed hidden"></div>
+      <p id="redline-empty" class="text-sm text-gray-400 hidden">No tracked changes on this document yet.</p>
+    </div>
+
+    <!-- Change list with accept / reject -->
+    <div id="change-list" class="hidden space-y-2">
+      <p class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Pending Changes</p>
+    </div>
   </div>
 
   <!-- Metadata -->
@@ -29,19 +56,179 @@
 
   <!-- Actions -->
   <div class="flex gap-3">
-    <a
-      href="/documents/{{ document.pk }}/edit/"
-      class="bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
-    >
+    <a href="/documents/{{ document.pk }}/edit/"
+      class="bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors">
       Edit Document
-    </a>
-    <a
-      href="/documents/{{ document.pk }}/search/"
-      class="bg-white border border-gray-300 text-gray-700 text-sm font-medium px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors"
-    >
-      Search Within
     </a>
   </div>
 
 </div>
+
+<script>
+  const docId = {{ document.pk }};
+  let changesLoaded = false;
+  let currentChanges = [];
+
+  function showView(view) {
+    const normalView = document.getElementById('view-normal');
+    const redlineView = document.getElementById('view-redline');
+    const btnNormal = document.getElementById('btn-normal');
+    const btnRedline = document.getElementById('btn-redline');
+    const active = 'text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white transition-colors';
+    const inactive = 'text-xs font-medium px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors';
+
+    normalView.classList.add('hidden');
+    redlineView.classList.add('hidden');
+    btnNormal.className = inactive;
+    btnRedline.className = inactive;
+
+    if (view === 'normal') {
+      normalView.classList.remove('hidden');
+      btnNormal.className = active;
+    } else {
+      redlineView.classList.remove('hidden');
+      btnRedline.className = active;
+      if (!changesLoaded) loadRedlineView();
+    }
+  }
+
+  async function loadRedlineView() {
+    const response = await fetch(`/api/documents/${docId}/changes/`);
+    const data = await response.json();
+    currentChanges = data.changes || [];
+
+    const loading = document.getElementById('redline-loading');
+    const content = document.getElementById('redline-content');
+    const empty = document.getElementById('redline-empty');
+    const changeList = document.getElementById('change-list');
+
+    loading.classList.add('hidden');
+
+    if (currentChanges.length === 0) {
+      empty.classList.remove('hidden');
+      return;
+    }
+
+    const originalContent = reconstructOriginal(currentChanges, '{{ document.content|escapejs }}');
+    content.innerHTML = buildRedlineHTML(originalContent, currentChanges);
+    content.classList.remove('hidden');
+
+    renderChangeList(currentChanges);
+    changeList.classList.remove('hidden');
+    changesLoaded = true;
+  }
+
+  function renderChangeList(changes) {
+    const changeList = document.getElementById('change-list');
+    // Clear existing change cards (keep the header label)
+    Array.from(changeList.querySelectorAll('.change-card')).forEach(el => el.remove());
+
+    changes.forEach(c => {
+      const card = document.createElement('div');
+      card.className = 'change-card flex items-center justify-between bg-white border border-gray-200 rounded-xl px-4 py-3';
+      card.id = `change-card-${c.id}`;
+      card.innerHTML = `
+        <div class="text-sm">
+          <span class="line-through text-red-500">${escapeHtml(c.original_text)}</span>
+          <span class="text-gray-400 mx-1">→</span>
+          <span class="text-green-600">${escapeHtml(c.replacement_text || '(deleted)')}</span>
+        </div>
+        <div class="flex gap-2 shrink-0 ml-4">
+          <button onclick="acceptChange(${c.id})"
+            class="text-xs font-medium text-green-700 bg-green-50 border border-green-200 px-3 py-1 rounded-lg hover:bg-green-100 transition-colors">
+            Accept
+          </button>
+          <button onclick="rejectChange(${c.id})"
+            class="text-xs font-medium text-red-700 bg-red-50 border border-red-200 px-3 py-1 rounded-lg hover:bg-red-100 transition-colors">
+            Reject
+          </button>
+        </div>
+      `;
+      changeList.appendChild(card);
+    });
+  }
+
+  async function acceptChange(changeId) {
+    const response = await fetch(`/api/documents/${docId}/changes/${changeId}/accept/`, { method: 'POST' });
+    if (!response.ok) return;
+
+    currentChanges = currentChanges.filter(c => c.id !== changeId);
+    document.getElementById(`change-card-${changeId}`).remove();
+    refreshRedlineContent();
+
+    if (currentChanges.length === 0) showEmpty();
+  }
+
+  async function rejectChange(changeId) {
+    const response = await fetch(`/api/documents/${docId}/changes/${changeId}/reject/`, { method: 'POST' });
+    if (!response.ok) return;
+
+    const data = await response.json();
+    currentChanges = currentChanges.filter(c => c.id !== changeId);
+    document.getElementById(`change-card-${changeId}`).remove();
+
+    // Update normal view content and version badge
+    document.getElementById('normal-content').textContent = data.content;
+    document.getElementById('version-badge').textContent = `v${data.version}`;
+
+    refreshRedlineContent(data.content);
+    if (currentChanges.length === 0) showEmpty();
+  }
+
+  function refreshRedlineContent(updatedContent) {
+    const base = updatedContent || '{{ document.content|escapejs }}';
+    const content = document.getElementById('redline-content');
+    if (currentChanges.length === 0) {
+      content.classList.add('hidden');
+      return;
+    }
+    const original = reconstructOriginal(currentChanges, base);
+    content.innerHTML = buildRedlineHTML(original, currentChanges);
+  }
+
+  function showEmpty() {
+    document.getElementById('redline-content').classList.add('hidden');
+    document.getElementById('change-list').classList.add('hidden');
+    document.getElementById('redline-empty').classList.remove('hidden');
+  }
+
+  function reconstructOriginal(changes, currentContent) {
+    let text = currentContent;
+    for (let i = changes.length - 1; i >= 0; i--) {
+      const c = changes[i];
+      text = text.replace(c.replacement_text, c.original_text);
+    }
+    return text;
+  }
+
+  function buildRedlineHTML(original, changes) {
+    const sorted = [...changes].sort((a, b) => a.position - b.position);
+    let result = '';
+    let cursor = 0;
+
+    for (const change of sorted) {
+      const pos = change.position;
+      if (pos > cursor) result += escapeHtml(original.slice(cursor, pos));
+      if (change.original_text) {
+        result += `<span class="line-through text-red-500 bg-red-50 px-0.5 rounded">${escapeHtml(change.original_text)}</span>`;
+      }
+      if (change.replacement_text) {
+        result += `<span class="text-green-600 bg-green-50 px-0.5 rounded">${escapeHtml(change.replacement_text)}</span>`;
+      }
+      cursor = pos + change.original_text.length;
+    }
+
+    result += escapeHtml(original.slice(cursor));
+    return result;
+  }
+
+  function escapeHtml(text) {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+</script>
 {% endblock %}

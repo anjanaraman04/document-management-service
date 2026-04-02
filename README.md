@@ -1,16 +1,18 @@
 # Document App
 
-A lightweight Django application for creating, managing, and searching text documents. Documents support bulk text replacement with version tracking, and full substring search both within a single document and across all documents.
+A Django application for creating, managing, and redlining text documents — similar to Microsoft Word's Track Changes. Documents support occurrence-based find & replace, a full change log with accept/reject, semantic search powered by a local AI model, and substring search within and across documents.
 
 ---
 
 ## Features
 
 - Create and retrieve documents
-- Bulk text replacement with partial success and warnings
-- Substring search within a single document or across all documents
+- Find & replace — target a specific occurrence of a word or phrase, not just all of them
+- Track Changes — every replacement is logged and can be accepted or rejected
+- Semantic search — find passages by meaning, not just exact keywords
+- Cross-document search with jump to edit
 - Version tracking — auto-increments on every update
-- Simple, sleek frontend built with Django templates and Tailwind CSS
+- Frontend built with Django templates and Tailwind CSS
 
 ---
 
@@ -35,8 +37,10 @@ source venv/bin/activate
 ### 3. Install dependencies
 
 ```bash
-pip install django
+pip install django sentence-transformers
 ```
+
+> The first time semantic search is used, the app will download the `all-MiniLM-L6-v2` model (~80MB). This only happens once and is cached automatically.
 
 ### 4. Apply migrations
 
@@ -60,9 +64,8 @@ The app will be available at [http://127.0.0.1:8000](http://127.0.0.1:8000).
 |---|---|
 | Home — list all documents | `/` |
 | Create a document | `/new/` |
-| View a document | `/documents/<id>/` |
-| Edit a document | `/documents/<id>/edit/` |
-| Search within a document | `/documents/<id>/search/` |
+| View a document (Normal / Track Changes) | `/documents/<id>/` |
+| Edit a document (Find & Replace / Semantic Search) | `/documents/<id>/edit/` |
 | Search across all documents | `/search/` |
 
 ---
@@ -74,9 +77,12 @@ All API endpoints are prefixed with `/api/documents/` and return JSON.
 ### Design Rationale
 
 - **No authentication** — this is a prototype intended for local use.
-- **Bulk replace over single replace** — the replace endpoint accepts an array of changes to allow multiple substitutions in one request, reducing round trips. Invalid changes are skipped with warnings rather than rejecting the whole request (partial success pattern).
+- **Occurrence-based replacement** — the replace endpoint accepts an optional `occurrence` index so callers can target a specific instance of a word (e.g. the 2nd "the") rather than replacing all of them. If omitted, all occurrences are replaced.
+- **Partial success pattern** — the replace endpoint accepts an array of changes. Invalid or not-found changes are skipped with a warning rather than rejecting the whole request.
+- **Track changes** — every replacement is recorded as a `DocumentChange` entry with the original text, replacement, and position. Changes can be accepted (removes the log entry) or rejected (reverts the content).
 - **Version auto-increment** — version is managed server-side and increments on every update. Clients cannot set or override it.
-- **Substring search** — search uses case-insensitive SQL `LIKE` directly on the documents table, ensuring results always reflect the latest content. Matches are returned with a snippet showing surrounding context with the matched term highlighted.
+- **Substring search** — search uses case-insensitive SQL `LIKE` directly on the documents table, ensuring results always reflect the latest content. All matches are returned with position, occurrence index, and a snippet with the matched term highlighted.
+- **Semantic search** — runs a local `all-MiniLM-L6-v2` sentence-transformers model. The document is split into sentences, each sentence and the query are embedded, and results are ranked by cosine similarity. No external API required.
 
 ---
 
@@ -133,25 +139,26 @@ curl http://127.0.0.1:8000/api/documents/1/
 
 ---
 
-### Bulk Replace Text
+### Replace Text
 
 **`PATCH /api/documents/<id>/replace-text/`**
 
-Applies an array of search/replacement pairs to the document content in order. Valid changes are applied even if others fail — skipped changes are reported in `warnings`. Version increments on every call.
+Applies an array of search/replacement pairs. Use `occurrence` (0-based) to target a specific instance — omit it to replace all. Valid changes are applied even if others fail.
 
 | Field | Type | Required |
 |---|---|---|
 | `changes` | array | Yes |
 | `changes[].search` | string | Yes |
 | `changes[].replacement` | string | Yes |
+| `changes[].occurrence` | integer | No — omit to replace all |
 
 ```bash
 curl -X PATCH http://127.0.0.1:8000/api/documents/1/replace-text/ \
   -H "Content-Type: application/json" \
   -d '{
     "changes": [
-      {"search": "Hello", "replacement": "Hi"},
-      {"search": "first", "replacement": "second"}
+      {"search": "Hello", "replacement": "Hi", "occurrence": 0},
+      {"search": "cheese", "replacement": "pizza"}
     ]
   }'
 ```
@@ -187,7 +194,7 @@ curl -X PATCH http://127.0.0.1:8000/api/documents/1/replace-text/ \
 
 **`GET /api/documents/<id>/search/?q=<query>`**
 
-Returns a snippet of content surrounding the first match, with the matched term wrapped in `>>>` and `<<<`.
+Returns all matches with their position, occurrence index, match text, and a snippet with the matched term wrapped in `>>>` and `<<<`.
 
 ```bash
 curl "http://127.0.0.1:8000/api/documents/1/search/?q=document"
@@ -197,8 +204,16 @@ curl "http://127.0.0.1:8000/api/documents/1/search/?q=document"
 ```json
 {
   "id": 1,
-  "query": "document",
-  "snippet": "Hi this is my second >>>document<<<!"
+  "query": "bob",
+  "total": 1,
+  "matches": [
+    {
+      "occurrence": 0,
+      "position": 15,
+      "match_text": "bob",
+      "snippet": "Hi my name is >>>bob<<<. I like pizza."
+    }
+  ]
 }
 ```
 
@@ -240,10 +255,114 @@ curl "http://127.0.0.1:8000/api/documents/search/?q=document"
 
 ---
 
+### Semantic Search Within a Document
+
+**`GET /api/documents/<id>/semantic-search/?q=<query>`**
+
+Finds the most relevant sentences in a document by meaning, not exact keywords. Returns up to 5 results ranked by similarity score (0–1).
+
+```bash
+curl "http://127.0.0.1:8000/api/documents/1/semantic-search/?q=greeting"
+```
+
+**Response `200`**
+```json
+{
+  "id": 1,
+  "query": "greeting",
+  "results": [
+    {
+      "rank": 1,
+      "score": 0.7431,
+      "text": "Hi my name is bob."
+    },
+    {
+      "rank": 2,
+      "score": 0.3012,
+      "text": "I like pizza."
+    }
+  ]
+}
+```
+
+---
+
+### List Tracked Changes
+
+**`GET /api/documents/<id>/changes/`**
+
+Returns all pending change records for a document.
+
+```bash
+curl http://127.0.0.1:8000/api/documents/1/changes/
+```
+
+**Response `200`**
+```json
+{
+  "id": 1,
+  "version": 2,
+  "changes": [
+    {
+      "id": 1,
+      "original_text": "Hello",
+      "replacement_text": "Hi",
+      "position": 0,
+      "version_at_change": 1,
+      "created_at": "2026-03-20T10:05:00+00:00"
+    }
+  ]
+}
+```
+
+---
+
+### Accept a Change
+
+**`POST /api/documents/<id>/changes/<change_id>/accept/`**
+
+Marks a change as accepted and removes it from the change log. The replacement is already applied to the document content, so no content change happens here.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/documents/1/changes/1/accept/
+```
+
+**Response `200`**
+```json
+{
+  "status": "accepted",
+  "change_id": 1
+}
+```
+
+---
+
+### Reject a Change
+
+**`POST /api/documents/<id>/changes/<change_id>/reject/`**
+
+Reverts the replacement back to the original text and removes the change record. Version increments.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/documents/1/changes/1/reject/
+```
+
+**Response `200`**
+```json
+{
+  "status": "rejected",
+  "change_id": 1,
+  "content": "Hello my name is bob. I like pizza.",
+  "version": 3
+}
+```
+
+---
+
 ## Running Tests
 
 ```bash
 python manage.py test documents.tests
 ```
 
-There are 31 tests covering document creation, retrieval, bulk replacement, and search.
+There are 44 tests covering document creation, retrieval, bulk replacement, search, and semantic search.

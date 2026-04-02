@@ -1,10 +1,11 @@
 import json
+import re
 from django.db import connection
 from django.http import JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
-from .models import Document
+from .models import Document, DocumentChange
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -99,15 +100,33 @@ class DocumentSearchView(View):
         if not query:
             return JsonResponse({'error': 'Query parameter "q" is required'}, status=400)
 
-        snippet = extract_snippet(document.content, query)
+        content = document.content
+        query_lower = query.lower()
+        content_lower = content.lower()
 
-        if snippet is None:
+        matches = []
+        offset = 0
+        while True:
+            pos = content_lower.find(query_lower, offset)
+            if pos == -1:
+                break
+            snippet = extract_snippet(content, query, padding=40)
+            matches.append({
+                'occurrence': len(matches),
+                'position': pos,
+                'snippet': snippet,
+                'match_text': content[pos:pos + len(query)],
+            })
+            offset = pos + len(query)
+
+        if not matches:
             return JsonResponse({'error': f'"{query}" not found in document'}, status=404)
 
         return JsonResponse({
             'id': document.pk,
             'query': query,
-            'snippet': snippet,
+            'total': len(matches),
+            'matches': matches,
         })
 
 
@@ -143,20 +162,60 @@ class DocumentReplaceTextView(View):
 
             search = change['search']
             replacement = change['replacement']
+            occurrence = change.get('occurrence')  # optional 0-based index
 
-            # Check for duplicate search terms
-            if search in seen_search_terms:
-                warnings.append(f'Duplicate search term "{search}" at index {i} — skipped')
-                continue
-
-            seen_search_terms.add(search)
+            # Check for duplicate search terms (only when replacing all occurrences)
+            if occurrence is None:
+                if search in seen_search_terms:
+                    warnings.append(f'Duplicate search term "{search}" at index {i} — skipped')
+                    continue
+                seen_search_terms.add(search)
 
             # Check search term exists in current content
             if search not in document.content:
                 warnings.append(f'Search term "{search}" not found in document — skipped')
                 continue
 
-            document.content = document.content.replace(search, replacement)
+            # Collect all positions of the search term
+            positions = []
+            offset = 0
+            while True:
+                pos = document.content.find(search, offset)
+                if pos == -1:
+                    break
+                positions.append(pos)
+                offset = pos + len(search)
+
+            if occurrence is not None:
+                # Replace only the specified occurrence
+                if occurrence >= len(positions):
+                    warnings.append(f'Occurrence {occurrence} of "{search}" does not exist (found {len(positions)}) — skipped')
+                    continue
+                target_pos = positions[occurrence]
+                DocumentChange.objects.create(
+                    document=document,
+                    original_text=search,
+                    replacement_text=replacement,
+                    position=target_pos,
+                    version_at_change=document.version,
+                )
+                # Replace only that specific occurrence
+                document.content = (
+                    document.content[:target_pos]
+                    + replacement
+                    + document.content[target_pos + len(search):]
+                )
+            else:
+                # Replace all occurrences and log each one
+                for pos in positions:
+                    DocumentChange.objects.create(
+                        document=document,
+                        original_text=search,
+                        replacement_text=replacement,
+                        position=pos,
+                        version_at_change=document.version,
+                    )
+                document.content = document.content.replace(search, replacement)
 
         document.version += 1
         document.save()
@@ -169,4 +228,128 @@ class DocumentReplaceTextView(View):
             'created_at': document.created_at.isoformat(),
             'updated_at': document.updated_at.isoformat(),
             'warnings': warnings,
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class DocumentSemanticSearchView(View):
+    _model = None
+
+    @classmethod
+    def get_model(cls):
+        if cls._model is None:
+            from sentence_transformers import SentenceTransformer
+            cls._model = SentenceTransformer('all-MiniLM-L6-v2')
+        return cls._model
+
+    def get(self, request, pk):
+        try:
+            document = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return JsonResponse({'error': 'Document not found'}, status=404)
+
+        query = request.GET.get('q', '').strip()
+        if not query:
+            return JsonResponse({'error': 'Query parameter "q" is required'}, status=400)
+
+        # Split into sentences (by ". ", "! ", "? ", or newlines)
+        raw_chunks = re.split(r'(?<=[.!?])\s+|\n+', document.content)
+        chunks = [c.strip() for c in raw_chunks if c.strip()]
+
+        if not chunks:
+            return JsonResponse({'error': 'Document has no content to search'}, status=400)
+
+        from sentence_transformers import util
+        import torch
+
+        model = self.get_model()
+        query_embedding = model.encode(query, convert_to_tensor=True)
+        chunk_embeddings = model.encode(chunks, convert_to_tensor=True)
+
+        scores = util.cos_sim(query_embedding, chunk_embeddings)[0]
+        top_k = min(5, len(chunks))
+        top_indices = torch.topk(scores, k=top_k).indices.tolist()
+
+        results = [
+            {
+                'rank': i + 1,
+                'score': round(float(scores[idx]), 4),
+                'text': chunks[idx],
+            }
+            for i, idx in enumerate(top_indices)
+        ]
+
+        return JsonResponse({
+            'id': document.pk,
+            'query': query,
+            'results': results,
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class DocumentChangesView(View):
+    def get(self, request, pk):
+        try:
+            document = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return JsonResponse({'error': 'Document not found'}, status=404)
+
+        changes = document.changes.all()
+
+        return JsonResponse({
+            'id': document.pk,
+            'version': document.version,
+            'changes': [
+                {
+                    'id': c.pk,
+                    'original_text': c.original_text,
+                    'replacement_text': c.replacement_text,
+                    'position': c.position,
+                    'version_at_change': c.version_at_change,
+                    'created_at': c.created_at.isoformat(),
+                }
+                for c in changes
+            ],
+        })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class DocumentChangeAcceptView(View):
+    def post(self, request, pk, change_id):
+        try:
+            change = DocumentChange.objects.get(pk=change_id, document_id=pk)
+        except DocumentChange.DoesNotExist:
+            return JsonResponse({'error': 'Change not found'}, status=404)
+
+        # Accepting a change simply removes it from the log — the replacement
+        # is already applied to the document content, so no content change needed.
+        change.delete()
+
+        return JsonResponse({'status': 'accepted', 'change_id': change_id})
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class DocumentChangeRejectView(View):
+    def post(self, request, pk, change_id):
+        try:
+            change = DocumentChange.objects.get(pk=change_id, document_id=pk)
+        except DocumentChange.DoesNotExist:
+            return JsonResponse({'error': 'Change not found'}, status=404)
+
+        document = change.document
+
+        # Rejecting reverts the replacement back to the original text
+        if change.replacement_text not in document.content:
+            return JsonResponse({'error': 'Replacement text no longer found in document — cannot revert'}, status=400)
+
+        document.content = document.content.replace(change.replacement_text, change.original_text, 1)
+        document.version += 1
+        document.save()
+        change.delete()
+
+        return JsonResponse({
+            'status': 'rejected',
+            'change_id': change_id,
+            'content': document.content,
+            'version': document.version,
         })

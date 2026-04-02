@@ -10,3 +10,18 @@ class Document(models.Model):
 
     def __str__(self):
         return f"{self.title} (v{self.version})"
+
+
+class DocumentChange(models.Model):
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='changes')
+    original_text = models.TextField()
+    replacement_text = models.TextField()
+    position = models.PositiveIntegerField()
+    version_at_change = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'"{self.original_text}" → "{self.replacement_text}" at pos {self.position}'

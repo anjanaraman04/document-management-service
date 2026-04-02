@@ -6,8 +6,6 @@ This document covers what I would change and add to make this prototype ready fo
 
 ## 1. Infrastructure and Deployment
 
-Before anything else, I'd want a reliable way to deploy and run the app consistently.
-
 **Containerization**
 - Package the app with Docker so it runs the same way on every machine
 
@@ -18,8 +16,6 @@ Before anything else, I'd want a reliable way to deploy and run the app consiste
 ---
 
 ## 2. Authentication and Authorization
-
-Right now anyone can access the API. That needs to change before real users and data are involved.
 
 **User Authentication**
 - Add user accounts with securely hashed passwords stored in the database
@@ -38,52 +34,80 @@ Right now anyone can access the API. That needs to change before real users and 
 
 ## 3. Database
 
-SQLite is fine for a prototype but won't hold up in production.
+**Relational Database (PostgreSQL)**
+- Replace SQLite with PostgreSQL for all structured data: user accounts, roles, permissions, document metadata (ownership, timestamps, versions)
+- Enforce constraints at the database level
 
-**Switch to PostgreSQL**
-- Better suited for multiple users and concurrent requests
-- Use it for user accounts, permissions, and document metadata
+**Document Storage (NoSQL)**
+- Move document content to a NoSQL store (MongoDB or DynamoDB) for:
+  - Flexible schema to accommodate varying document structures
+  - Fast read/write performance
+  - Horizontal scalability for large document datasets
 
-**Consider NoSQL for Document Content**
-- Something like MongoDB could work well for storing the actual document text since documents can vary a lot in size and structure
-
-**Save Document History**
-- Store previous versions of a document so users can see what changed and roll back if needed
+**Versioning**
+- Right now the app logs each individual text replacement as a `DocumentChange` record, which tracks what changed, where, and at what version
+- The next step would be saving a full content snapshot before every edit so users can browse history and restore any previous version — kind of like Git commits for documents
+- This would also make the accept/reject workflow more reliable since you'd always have a clean copy to fall back on
 
 ---
 
 ## 4. Scalability and Performance
 
-If many users are using the app at once, the current setup would struggle.
-
 **Scaling the App**
 - Run multiple instances of the app behind a load balancer to handle more traffic
-- Auto-scale based on how busy things get
+- Enable auto-scaling based on traffic metrics
+
+**Database Scaling**
+- Use read replicas for read-heavy workloads (search, document retrieval)
+- Separate read and write paths where appropriate
 
 **Caching**
 - Cache frequently accessed documents so we're not hitting the database every time
-- Also cache recent search results
+- Cache recent search results
 - Clear the cache when a document is updated
+- For semantic search specifically, cache the sentence embeddings for each document — right now the app re-embeds the entire document on every query, which is slow and wasteful. Embeddings only need to be recomputed when the document content actually changes
 
 **Background Jobs**
-- Move slow operations like search indexing to background workers so they don't slow down API responses
+- Move slow operations to background workers so they don't block API responses
+- The biggest example right now is semantic search — the AI model (~80MB) loads into memory on the first request and re-runs embedding on every search. In production this should happen in the background, not during the request itself
+- Other candidates: search indexing, generating snapshots after large edits
 
-**API improvements**
+**Search at Scale**
+- The cross-document search currently does a full scan of every document in the database (`LIKE` query), which will get slow as the number of documents grows
+- A proper search index (like Elasticsearch or PostgreSQL full-text search) would make this much faster
+- For semantic search, the right approach at scale is to pre-compute and store document embeddings in a vector database (like FAISS or pgvector), then query against that index instead of re-embedding everything on every request
+
+**API Improvements**
 - Add pagination so large lists don't return everything at once
 - Optimize slow database queries
 
 ---
 
-## 5. Monitoring
+## 5. New Features Added Since v1
 
-Once the app is live, I'd want to know when something goes wrong.
+**Find & Replace (Redlining)**
+- The app now works like Microsoft Word's Track Changes — users can find specific occurrences of text, replace them, and every change is logged
+- In production, a key concern would be concurrent editing: if two users are editing the same document at the same time, changes could overwrite each other. This would need optimistic locking or real-time conflict detection
+
+**Semantic Search**
+- Added a semantic search feature powered by a local AI model (`all-MiniLM-L6-v2` from sentence-transformers)
+- Instead of matching exact keywords, it understands the meaning of a query and finds the most relevant sentences in a document
+- Currently runs entirely on the server with no GPU — fine for a prototype but would need proper infrastructure (background workers, embedding cache, vector store) before going to production
+
+**Cross-Document Search with Jump to Edit**
+- Users can search across all documents and jump directly into the Find & Replace editor with the search term pre-filled
+- This connects the search and editing workflows, which makes it more useful than having them as separate features
+
+---
+
+## 6. Monitoring
 
 **Logging**
 - Log important events like API requests, errors, and failed login attempts
-- Store logs somewhere central so they're easy to search through
+- Centralised structured logging in JSON format
 
 **Metrics**
-- Track things like how fast requests are responding and how often errors occur
+- Track: request latency (p50, p95, p99), error rates, throughput (req/sec), and database query performance
 
 **Alerts**
-- Get notified when error rates spike or the app goes down so issues can be caught quickly
+- Set up alerts for: high error rates, latency spikes, and service downtime

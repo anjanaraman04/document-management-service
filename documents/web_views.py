@@ -21,10 +21,5 @@ def update_document(request, pk):
     return render(request, 'documents/update.html', {'document': document})
 
 
-def search_document(request, pk):
-    document = get_object_or_404(Document, pk=pk)
-    return render(request, 'documents/search.html', {'document': document})
-
-
 def cross_search(request):
     return render(request, 'documents/cross_search.html')
