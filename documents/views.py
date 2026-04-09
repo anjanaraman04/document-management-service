@@ -55,14 +55,14 @@ class DocumentDetailView(View):
         })
 
 
-def extract_snippet(content, query, padding=50):
-    index = content.lower().find(query.lower())
+def extract_snippet(content, query, index=None, padding=50):
+    if index is None:
+        index = content.lower().find(query.lower())
     if index == -1:
         return None
     start = max(0, index - padding)
     end = min(len(content), index + len(query) + padding)
     snippet = content[start:end]
-    # Wrap the matched term with markers for highlight rendering
     match = content[index:index + len(query)]
     snippet = snippet.replace(match, f'>>>{match}<<<', 1)
     return snippet
@@ -80,10 +80,23 @@ class DocumentCrossSearchView(View):
         if not documents.exists():
             return JsonResponse({'error': f'"{query}" not found in any document'}, status=404)
 
-        results = [
-            {'id': doc.pk, 'snippet': extract_snippet(doc.content, query)}
-            for doc in documents
-        ]
+        results = []
+        for doc in documents:
+            matches = []
+            content_lower = doc.content.lower()
+            query_lower = query.lower()
+            offset = 0
+            while True:
+                pos = content_lower.find(query_lower, offset)
+                if pos == -1:
+                    break
+                matches.append({
+                    'occurrence': len(matches),
+                    'position': pos,
+                    'snippet': extract_snippet(doc.content, query, pos),
+                })
+                offset = pos + len(query)
+            results.append({'id': doc.pk, 'title': doc.title, 'matches': matches})
 
         return JsonResponse({'query': query, 'results': results})
 
@@ -143,79 +156,55 @@ class DocumentReplaceTextView(View):
         except json.JSONDecodeError:
             return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
-        changes = body.get('changes')
+        search = body.get('search')
+        replacement = body.get('replacement')
+        occurrence = body.get('occurrence')  # optional 0-based index
 
-        if not changes:
-            return JsonResponse({'error': '"changes" array is required'}, status=400)
+        if not search or replacement is None:
+            return JsonResponse({'error': '"search" and "replacement" are required'}, status=400)
 
-        if not isinstance(changes, list):
-            return JsonResponse({'error': '"changes" must be an array'}, status=400)
+        if search not in document.content:
+            return JsonResponse({'error': f'"{search}" not found in document'}, status=404)
 
-        warnings = []
-        seen_search_terms = set()
+        # Collect all positions of the search term
+        positions = []
+        offset = 0
+        while True:
+            pos = document.content.find(search, offset)
+            if pos == -1:
+                break
+            positions.append(pos)
+            offset = pos + len(search)
 
-        for i, change in enumerate(changes):
-            # Validate structure
-            if not isinstance(change, dict) or 'search' not in change or 'replacement' not in change:
-                warnings.append(f'Change at index {i} is missing "search" or "replacement" fields — skipped')
-                continue
-
-            search = change['search']
-            replacement = change['replacement']
-            occurrence = change.get('occurrence')  # optional 0-based index
-
-            # Check for duplicate search terms (only when replacing all occurrences)
-            if occurrence is None:
-                if search in seen_search_terms:
-                    warnings.append(f'Duplicate search term "{search}" at index {i} — skipped')
-                    continue
-                seen_search_terms.add(search)
-
-            # Check search term exists in current content
-            if search not in document.content:
-                warnings.append(f'Search term "{search}" not found in document — skipped')
-                continue
-
-            # Collect all positions of the search term
-            positions = []
-            offset = 0
-            while True:
-                pos = document.content.find(search, offset)
-                if pos == -1:
-                    break
-                positions.append(pos)
-                offset = pos + len(search)
-
-            if occurrence is not None:
-                # Replace only the specified occurrence
-                if occurrence >= len(positions):
-                    warnings.append(f'Occurrence {occurrence} of "{search}" does not exist (found {len(positions)}) — skipped')
-                    continue
-                target_pos = positions[occurrence]
+        if occurrence is not None:
+            if occurrence >= len(positions):
+                return JsonResponse(
+                    {'error': f'Occurrence {occurrence} does not exist (found {len(positions)})'},
+                    status=400,
+                )
+            target_pos = positions[occurrence]
+            DocumentChange.objects.create(
+                document=document,
+                original_text=search,
+                replacement_text=replacement,
+                position=target_pos,
+                version_at_change=document.version,
+            )
+            document.content = (
+                document.content[:target_pos]
+                + replacement
+                + document.content[target_pos + len(search):]
+            )
+        else:
+            for pos in positions:
                 DocumentChange.objects.create(
                     document=document,
                     original_text=search,
                     replacement_text=replacement,
-                    position=target_pos,
+                    position=pos,
                     version_at_change=document.version,
                 )
-                # Replace only that specific occurrence
-                document.content = (
-                    document.content[:target_pos]
-                    + replacement
-                    + document.content[target_pos + len(search):]
-                )
-            else:
-                # Replace all occurrences and log each one
-                for pos in positions:
-                    DocumentChange.objects.create(
-                        document=document,
-                        original_text=search,
-                        replacement_text=replacement,
-                        position=pos,
-                        version_at_change=document.version,
-                    )
-                document.content = document.content.replace(search, replacement)
+            document.content = document.content.replace(search, replacement)
 
         document.version += 1
         document.save()
@@ -227,7 +216,6 @@ class DocumentReplaceTextView(View):
             'version': document.version,
             'created_at': document.created_at.isoformat(),
             'updated_at': document.updated_at.isoformat(),
-            'warnings': warnings,
         })
 
 

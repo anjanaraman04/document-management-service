@@ -9,7 +9,7 @@ A Django application for creating, managing, and redlining text documents — si
 - Create and retrieve documents
 - Find & replace — target a specific occurrence of a word or phrase, not just all of them
 - Track Changes — every replacement is logged and can be accepted or rejected
-- Semantic search — find passages by meaning, not just exact keywords
+- Semantic search — find passages by meaning, not just exact keywords, toggled in the edit panel
 - Cross-document search with jump to edit
 - Version tracking — auto-increments on every update
 - Frontend built with Django templates and Tailwind CSS
@@ -77,8 +77,7 @@ All API endpoints are prefixed with `/api/documents/` and return JSON.
 ### Design Rationale
 
 - **No authentication** — this is a prototype intended for local use.
-- **Occurrence-based replacement** — the replace endpoint accepts an optional `occurrence` index so callers can target a specific instance of a word (e.g. the 2nd "the") rather than replacing all of them. If omitted, all occurrences are replaced.
-- **Partial success pattern** — the replace endpoint accepts an array of changes. Invalid or not-found changes are skipped with a warning rather than rejecting the whole request.
+- **Occurrence-based replacement** — the replace endpoint accepts an optional `occurrence` index so callers can target a specific instance of a word (e.g. the 2nd "the") rather than replacing all of them.
 - **Track changes** — every replacement is recorded as a `DocumentChange` entry with the original text, replacement, and position. Changes can be accepted (removes the log entry) or rejected (reverts the content).
 - **Version auto-increment** — version is managed server-side and increments on every update. Clients cannot set or override it.
 - **Substring search** — search uses case-insensitive SQL `LIKE` directly on the documents table, ensuring results always reflect the latest content. All matches are returned with position, occurrence index, and a snippet with the matched term highlighted.
@@ -100,7 +99,7 @@ All API endpoints are prefixed with `/api/documents/` and return JSON.
 ```bash
 curl -X POST http://127.0.0.1:8000/api/documents/ \
   -H "Content-Type: application/json" \
-  -d '{"title": "My Document", "content": "Hello this is my first document!"}'
+  -d '{"title": "My Document", "content": "Hello this is my first document."}'
 ```
 
 **Response `201`**
@@ -108,7 +107,7 @@ curl -X POST http://127.0.0.1:8000/api/documents/ \
 {
   "id": 1,
   "title": "My Document",
-  "content": "Hello this is my first document!",
+  "content": "Hello this is my first document.",
   "version": 1,
   "created_at": "2026-03-20T10:00:00+00:00",
   "updated_at": "2026-03-20T10:00:00+00:00"
@@ -130,7 +129,7 @@ curl http://127.0.0.1:8000/api/documents/1/
 {
   "id": 1,
   "title": "My Document",
-  "content": "Hello this is my first document!",
+  "content": "Hello this is my first document.",
   "version": 1,
   "created_at": "2026-03-20T10:00:00+00:00",
   "updated_at": "2026-03-20T10:00:00+00:00"
@@ -143,24 +142,18 @@ curl http://127.0.0.1:8000/api/documents/1/
 
 **`PATCH /api/documents/<id>/replace-text/`**
 
-Applies an array of search/replacement pairs. Use `occurrence` (0-based) to target a specific instance — omit it to replace all. Valid changes are applied even if others fail.
+Replaces a search term in the document content and logs the change. Use `occurrence` (0-based) to target a specific instance — omit it to replace all occurrences.
 
 | Field | Type | Required |
 |---|---|---|
-| `changes` | array | Yes |
-| `changes[].search` | string | Yes |
-| `changes[].replacement` | string | Yes |
-| `changes[].occurrence` | integer | No — omit to replace all |
+| `search` | string | Yes |
+| `replacement` | string | Yes |
+| `occurrence` | integer | No — omit to replace all |
 
 ```bash
 curl -X PATCH http://127.0.0.1:8000/api/documents/1/replace-text/ \
   -H "Content-Type: application/json" \
-  -d '{
-    "changes": [
-      {"search": "Hello", "replacement": "Hi", "occurrence": 0},
-      {"search": "cheese", "replacement": "pizza"}
-    ]
-  }'
+  -d '{"search": "Hello", "replacement": "Hi", "occurrence": 0}'
 ```
 
 **Response `200`**
@@ -168,23 +161,24 @@ curl -X PATCH http://127.0.0.1:8000/api/documents/1/replace-text/ \
 {
   "id": 1,
   "title": "My Document",
-  "content": "Hi this is my second document!.",
+  "content": "Hi this is my first document.",
   "version": 2,
   "created_at": "2026-03-20T10:00:00+00:00",
-  "updated_at": "2026-03-20T10:05:00+00:00",
-  "warnings": []
+  "updated_at": "2026-03-20T10:05:00+00:00"
 }
 ```
 
-**Response with warnings** (partial success)
+**Response `404`** — search term not found
 ```json
 {
-  "id": 1,
-  "content": "Hi this is my second document!",
-  "version": 2,
-  "warnings": [
-    "Search term \"foo\" not found in document — skipped"
-  ]
+  "error": "\"Hello\" not found in document"
+}
+```
+
+**Response `400`** — occurrence out of range
+```json
+{
+  "error": "Occurrence 5 does not exist (found 1)"
 }
 ```
 
@@ -197,21 +191,21 @@ curl -X PATCH http://127.0.0.1:8000/api/documents/1/replace-text/ \
 Returns all matches with their position, occurrence index, match text, and a snippet with the matched term wrapped in `>>>` and `<<<`.
 
 ```bash
-curl "http://127.0.0.1:8000/api/documents/1/search/?q=document"
+curl "http://127.0.0.1:8000/api/documents/1/search/?q=first"
 ```
 
 **Response `200`**
 ```json
 {
   "id": 1,
-  "query": "bob",
+  "query": "first",
   "total": 1,
   "matches": [
     {
       "occurrence": 0,
-      "position": 15,
-      "match_text": "bob",
-      "snippet": "Hi my name is >>>bob<<<. I like pizza."
+      "position": 18,
+      "match_text": "first",
+      "snippet": "Hi this is my >>>first<<< document."
     }
   ]
 }
@@ -220,7 +214,7 @@ curl "http://127.0.0.1:8000/api/documents/1/search/?q=document"
 **Response `404`** — query not found
 ```json
 {
-  "error": "\"document\" not found in document"
+  "error": "\"first\" not found in document"
 }
 ```
 
@@ -230,7 +224,7 @@ curl "http://127.0.0.1:8000/api/documents/1/search/?q=document"
 
 **`GET /api/documents/search/?q=<query>`**
 
-Returns all documents containing the query as a substring, each with a highlighted snippet.
+Returns all documents containing the query as a substring. Each document includes all matches with position and snippet.
 
 ```bash
 curl "http://127.0.0.1:8000/api/documents/search/?q=document"
@@ -243,11 +237,11 @@ curl "http://127.0.0.1:8000/api/documents/search/?q=document"
   "results": [
     {
       "id": 1,
-      "snippet": "Hi this is my second >>>document<<<!"
-    },
-    {
-      "id": 2,
-      "snippet": "I also wrote this >>>document<<<."
+      "title": "My Document",
+      "matches": [
+        {"occurrence": 0, "position": 22, "snippet": "Hello this is my first >>>document<<<."},
+        {"occurrence": 1, "position": 55, "snippet": "Hello this is my second >>>document<<<."}
+      ]
     }
   ]
 }
@@ -262,24 +256,24 @@ curl "http://127.0.0.1:8000/api/documents/search/?q=document"
 Finds the most relevant sentences in a document by meaning, not exact keywords. Returns up to 5 results ranked by similarity score (0–1).
 
 ```bash
-curl "http://127.0.0.1:8000/api/documents/1/semantic-search/?q=greeting"
+curl "http://127.0.0.1:8000/api/documents/1/semantic-search/?q=introduction"
 ```
 
 **Response `200`**
 ```json
 {
   "id": 1,
-  "query": "greeting",
+  "query": "introduction",
   "results": [
     {
       "rank": 1,
       "score": 0.7431,
-      "text": "Hi my name is bob."
+      "text": "Hello this is my first document."
     },
     {
       "rank": 2,
       "score": 0.3012,
-      "text": "I like pizza."
+      "text": "Hello this is my second document."
     }
   ]
 }
@@ -321,7 +315,7 @@ curl http://127.0.0.1:8000/api/documents/1/changes/
 
 **`POST /api/documents/<id>/changes/<change_id>/accept/`**
 
-Marks a change as accepted and removes it from the change log. The replacement is already applied to the document content, so no content change happens here.
+Marks a change as accepted and removes it from the change log. The replacement is already applied to the document content so no content change happens here.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/documents/1/changes/1/accept/
@@ -352,7 +346,7 @@ curl -X POST http://127.0.0.1:8000/api/documents/1/changes/1/reject/
 {
   "status": "rejected",
   "change_id": 1,
-  "content": "Hello my name is bob. I like pizza.",
+  "content": "Hello this is my first document.",
   "version": 3
 }
 ```
@@ -365,4 +359,4 @@ curl -X POST http://127.0.0.1:8000/api/documents/1/changes/1/reject/
 python manage.py test documents.tests
 ```
 
-There are 44 tests covering document creation, retrieval, bulk replacement, search, and semantic search.
+There are 43 tests covering document creation, retrieval, text replacement, search, and semantic search.

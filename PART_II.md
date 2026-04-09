@@ -81,26 +81,8 @@ This document covers what I would change and add to make this prototype ready fo
 - Add pagination so large lists don't return everything at once
 - Optimize slow database queries
 
----
 
-## 5. New Features Added Since v1
-
-**Find & Replace (Redlining)**
-- The app now works like Microsoft Word's Track Changes — users can find specific occurrences of text, replace them, and every change is logged
-- In production, a key concern would be concurrent editing: if two users are editing the same document at the same time, changes could overwrite each other. This would need optimistic locking or real-time conflict detection
-
-**Semantic Search**
-- Added a semantic search feature powered by a local AI model (`all-MiniLM-L6-v2` from sentence-transformers)
-- Instead of matching exact keywords, it understands the meaning of a query and finds the most relevant sentences in a document
-- Currently runs entirely on the server with no GPU — fine for a prototype but would need proper infrastructure (background workers, embedding cache, vector store) before going to production
-
-**Cross-Document Search with Jump to Edit**
-- Users can search across all documents and jump directly into the Find & Replace editor with the search term pre-filled
-- This connects the search and editing workflows, which makes it more useful than having them as separate features
-
----
-
-## 6. Monitoring
+## 5. Monitoring
 
 **Logging**
 - Log important events like API requests, errors, and failed login attempts

@@ -190,9 +190,7 @@
     const response = await fetch(`/api/documents/${docId}/replace-text/`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        changes: [{ search: query, replacement, occurrence: selectedOccurrence }]
-      }),
+      body: JSON.stringify({ search: query, replacement, occurrence: selectedOccurrence }),
     });
 
     const data = await response.json();

@@ -12,77 +12,66 @@ class UpdateDocumentTests(TestCase):
         )
         self.url = f'/api/documents/{self.document.pk}/replace-text/'
 
-    def patch(self, changes):
+    def patch(self, search, replacement, occurrence=None):
+        body = {'search': search, 'replacement': replacement}
+        if occurrence is not None:
+            body['occurrence'] = occurrence
         return self.client.patch(
             self.url,
-            data=json.dumps({'changes': changes}),
+            data=json.dumps(body),
             content_type='application/json',
         )
 
-    def test_one_valid_replacement_is_successful(self):
-        response = self.patch([{'search': 'bob', 'replacement': 'alice'}])
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertIn('alice', body['content'])
-        self.assertNotIn('bob', body['content'])
-        self.assertEqual(body['warnings'], [])
-
-    def test_multiple_replacements_applied_in_order(self):
-        response = self.patch([
-            {'search': 'hello', 'replacement': 'hi'},
-            {'search': 'cheese', 'replacement': 'pizza'},
-        ])
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertIn('hi', body['content'])
-        self.assertIn('pizza', body['content'])
-        self.assertNotIn('hello', body['content'])
-        self.assertNotIn('cheese', body['content'])
-        self.assertEqual(body['warnings'], [])
-
-    def test_missing_target_text_returns_warning(self):
-        response = self.patch([{'search': 'nonexistent', 'replacement': 'something'}])
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertEqual(len(body['warnings']), 1)
-        self.assertIn('nonexistent', body['warnings'][0])
-
-    def test_repeated_target_text_replaces_all_occurrences(self):
-        # 'hello' appears twice in content
-        response = self.patch([{'search': 'hello', 'replacement': 'hi'}])
+    def test_replace_all_occurrences(self):
+        response = self.patch('hello', 'hi')
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertNotIn('hello', body['content'])
         self.assertEqual(body['content'].count('hi'), 2)
 
-    def test_overlapping_changes_first_replacement_affects_second(self):
-        # 'bob' → 'alice', then 'alice' → 'charlie'
-        # since changes apply sequentially, 'bob' becomes 'alice' then 'charlie'
-        response = self.patch([
-            {'search': 'bob', 'replacement': 'alice'},
-            {'search': 'alice', 'replacement': 'charlie'},
-        ])
+    def test_replace_specific_occurrence(self):
+        response = self.patch('hello', 'hi', occurrence=0)
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertIn('charlie', body['content'])
-        self.assertNotIn('bob', body['content'])
-        self.assertNotIn('alice', body['content'])
+        # Only the first 'hello' is replaced
+        self.assertIn('hi', body['content'])
+        self.assertIn('hello', body['content'])
 
-    def test_empty_changes_list_returns_400(self):
-        response = self.patch([])
+    def test_replace_increments_version(self):
+        original_version = self.document.version
+        response = self.patch('bob', 'alice')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['version'], original_version + 1)
+
+    def test_search_term_not_found_returns_404(self):
+        response = self.patch('nonexistent', 'something')
+        self.assertEqual(response.status_code, 404)
+        self.assertIn('error', response.json())
+
+    def test_occurrence_out_of_range_returns_400(self):
+        response = self.patch('hello', 'hi', occurrence=99)
         self.assertEqual(response.status_code, 400)
         self.assertIn('error', response.json())
 
-    def test_malformed_payload_missing_changes_key_returns_400(self):
+    def test_missing_search_returns_400(self):
         response = self.client.patch(
             self.url,
-            data=json.dumps({'search': 'hello', 'replacement': 'hi'}),
+            data=json.dumps({'replacement': 'hi'}),
             content_type='application/json',
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn('error', response.json())
 
-    def test_malformed_payload_invalid_json_returns_400(self):
+    def test_missing_replacement_returns_400(self):
+        response = self.client.patch(
+            self.url,
+            data=json.dumps({'search': 'hello'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('error', response.json())
+
+    def test_invalid_json_returns_400(self):
         response = self.client.patch(
             self.url,
             data='not valid json',
@@ -91,20 +80,10 @@ class UpdateDocumentTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('error', response.json())
 
-    def test_malformed_change_missing_fields_returns_warning(self):
-        response = self.patch([
-            {'search': 'hello'},
-            {'search': 'cheese', 'replacement': 'pizza'},
-        ])
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertEqual(len(body['warnings']), 1)
-        self.assertIn('pizza', body['content'])
-
     def test_non_existent_document_returns_404(self):
         response = self.client.patch(
             '/api/documents/99999/replace-text/',
-            data=json.dumps({'changes': [{'search': 'hello', 'replacement': 'hi'}]}),
+            data=json.dumps({'search': 'hello', 'replacement': 'hi'}),
             content_type='application/json',
         )
         self.assertEqual(response.status_code, 404)
