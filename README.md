@@ -386,4 +386,4 @@ curl -X DELETE http://127.0.0.1:8000/api/documents/1/delete/
 python manage.py test documents.tests
 ```
 
-There are 43 tests covering document creation, retrieval, text replacement, search, and semantic search.
+There are 47 tests covering document creation, retrieval, deletion, text replacement, search, and semantic search.
