@@ -35,14 +35,8 @@ This document covers what I would change and add to make this prototype ready fo
 ## 3. Database
 
 **Relational Database (PostgreSQL)**
-- Replace SQLite with PostgreSQL for all structured data: user accounts, roles, permissions, document metadata (ownership, timestamps, versions)
+- Replace SQLite with PostgreSQL for all data: user accounts, roles, permissions, documents, document change logs, etc. 
 - Enforce constraints at the database level
-
-**Document Storage (NoSQL)**
-- Move document content to a NoSQL store (MongoDB or DynamoDB) for:
-  - Flexible schema to accommodate varying document structures
-  - Fast read/write performance
-  - Horizontal scalability for large document datasets
 
 **Versioning**
 - Right now the app logs each individual text replacement as a `DocumentChange` record, which tracks what changed, where, and at what version

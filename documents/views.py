@@ -317,6 +317,17 @@ class DocumentChangeAcceptView(View):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
+@method_decorator(csrf_exempt, name='dispatch')
+class DocumentDeleteView(View):
+    def delete(self, request, pk):
+        try:
+            document = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return JsonResponse({'error': 'Document not found'}, status=404)
+        document.delete()
+        return JsonResponse({'status': 'deleted', 'id': pk})
+
+
 class DocumentChangeRejectView(View):
     def post(self, request, pk, change_id):
         try:

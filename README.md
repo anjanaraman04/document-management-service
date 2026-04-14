@@ -62,7 +62,7 @@ The app will be available at [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 | Page | URL |
 |---|---|
-| Home — list all documents | `/` |
+| Home — list and delete documents | `/` |
 | Create a document | `/new/` |
 | View a document (Normal / Track Changes) | `/documents/<id>/` |
 | Edit a document (Find & Replace / Semantic Search) | `/documents/<id>/edit/` |
@@ -348,6 +348,33 @@ curl -X POST http://127.0.0.1:8000/api/documents/1/changes/1/reject/
   "change_id": 1,
   "content": "Hello this is my first document.",
   "version": 3
+}
+```
+
+---
+
+### Delete a Document
+
+**`DELETE /api/documents/<id>/delete/`**
+
+Permanently deletes a document and all its associated change records.
+
+```bash
+curl -X DELETE http://127.0.0.1:8000/api/documents/1/delete/
+```
+
+**Response `200`**
+```json
+{
+  "status": "deleted",
+  "id": 1
+}
+```
+
+**Response `404`** — document not found
+```json
+{
+  "error": "Document not found"
 }
 ```
 
